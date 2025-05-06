@@ -8,6 +8,8 @@ import logging.config
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any
+import chromadb
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -38,9 +40,10 @@ LOGS_DIR = BASE_DIR / "logs"
 UPLOADS_DIR.mkdir(exist_ok=True)
 EXPORTS_DIR.mkdir(exist_ok=True)
 
-# Create necessary directories
+# Create necessary directories with proper permissions
 for directory in [VECTORSTORE_DIR, LOGS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o777)  # Set full permissions
 
 # Validate configuration
 if not OPENAI_API_KEY:
@@ -60,17 +63,27 @@ SEARCH_CONFIGS = {
     "max_arxiv_results": 5
 }
 
+# Create temporary directory for ChromaDB
+TEMP_DIR = tempfile.mkdtemp()
+
+# ChromaDB client settings
+CHROMA_SETTINGS = {
+    "anonymized_telemetry": False,
+    "is_persistent": False,
+    "persist_directory": TEMP_DIR
+}
+
+# Create local vectorstore directory with proper permissions
+local_vectorstore_dir = BASE_DIR / "local_vectorstore"
+local_vectorstore_dir.mkdir(parents=True, exist_ok=True)
+os.chmod(local_vectorstore_dir, 0o777)  # Set full permissions
+
 # Vector store configurations
 VECTORSTORE_CONFIGS = {
     "collection_name": "research_documents",
-    "persist_directory": str(VECTORSTORE_DIR),
     "embedding_dimensions": 1536,
-    "auto_persist": True,
-    "hnsw_config": {
-        "M": 64,  # Maximum number of connections per element
-        "ef_construction": 200,  # Size of the dynamic candidate list during construction
-        "ef_search": 100  # Size of the dynamic candidate list during search
-    }
+    "auto_persist": False,
+    "client_settings": CHROMA_SETTINGS
 }
 
 # PDF Export configurations

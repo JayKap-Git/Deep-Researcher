@@ -4,6 +4,7 @@ Knowledge base module for storing and retrieving research documents.
 
 import os
 import logging
+import shutil
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from langchain_core.documents import Document
@@ -13,7 +14,8 @@ import chromadb
 from backend.config import (
     OPENAI_API_KEY,
     VECTORSTORE_DIR,
-    VECTORSTORE_CONFIGS
+    VECTORSTORE_CONFIGS,
+    CHROMA_SETTINGS
 )
 from backend.gather import DataGatherer, ArxivResult
 
@@ -32,26 +34,41 @@ class KnowledgeBase:
                 openai_api_key=OPENAI_API_KEY
             )
             
-            # Create ChromaDB client settings
-            client_settings = chromadb.config.Settings(
-                anonymized_telemetry=False,
-                is_persistent=True,
-                persist_directory=VECTORSTORE_CONFIGS["persist_directory"]
-            )
-            
             # Initialize vector store
-            self.vectorstore = Chroma(
-                collection_name=VECTORSTORE_CONFIGS["collection_name"],
-                embedding_function=self.embeddings,
-                persist_directory=VECTORSTORE_CONFIGS["persist_directory"],
-                client_settings=client_settings,
-                collection_metadata={"hnsw:space": "cosine", "hnsw:construction_ef": VECTORSTORE_CONFIGS["hnsw_config"]["ef_construction"], "hnsw:search_ef": VECTORSTORE_CONFIGS["hnsw_config"]["ef_search"], "hnsw:M": VECTORSTORE_CONFIGS["hnsw_config"]["M"]}
-            )
+            self._initialize_vectorstore()
             
             logger.info(f"Initialized vector store with collection: {VECTORSTORE_CONFIGS['collection_name']}")
             
         except Exception as e:
             logger.error(f"Error initializing knowledge base: {str(e)}")
+            raise
+            
+    def _initialize_vectorstore(self):
+        """Initialize the vector store with proper settings."""
+        try:
+            self.vectorstore = Chroma(
+                collection_name=VECTORSTORE_CONFIGS["collection_name"],
+                embedding_function=self.embeddings,
+                client_settings=chromadb.config.Settings(**VECTORSTORE_CONFIGS["client_settings"])
+            )
+            logger.info(f"Initialized vector store with collection: {VECTORSTORE_CONFIGS['collection_name']}")
+        except ValueError as e:
+            # If there's an existing instance with different settings, delete and recreate
+            if "already exists" in str(e):
+                self._delete_vectorstore()
+                self._initialize_vectorstore()
+            else:
+                raise
+    
+    def _delete_vectorstore(self):
+        """Delete the vector store."""
+        try:
+            if self.vectorstore:
+                self.vectorstore._client.delete_collection()
+                self.vectorstore = None
+                logger.info("Vector store deleted successfully")
+        except Exception as e:
+            logger.error(f"Error deleting vector store: {str(e)}")
             raise
     
     def add_documents(self, documents: List[Document]) -> None:
@@ -122,20 +139,11 @@ class KnowledgeBase:
     def clear(self) -> None:
         """Clear all documents from the knowledge base."""
         try:
-            # Get all document IDs
-            collection = self.vectorstore._collection
-            all_ids = collection.get()["ids"]
+            # Delete the entire vector store
+            self._delete_vectorstore()
             
-            if all_ids:
-                # Delete all documents
-                collection.delete(ids=all_ids)
-                
-            # Recreate the collection
-            self.vectorstore = Chroma(
-                collection_name=VECTORSTORE_CONFIGS["collection_name"],
-                embedding_function=self.embeddings,
-                persist_directory=VECTORSTORE_CONFIGS["persist_directory"]
-            )
+            # Reinitialize with fresh settings
+            self._initialize_vectorstore()
             
             logger.info("Knowledge base cleared successfully")
             
