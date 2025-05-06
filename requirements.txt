@@ -1,0 +1,48 @@
+# Core packages
+langchain==0.1.12
+langchain-community==0.0.27
+langchain-openai==0.0.8
+langchain-core==0.1.27
+
+# Vector store and embeddings
+chromadb==0.4.24
+sentence-transformers==2.5.1
+faiss-cpu==1.7.4  # For vector similarity search
+
+# Search and data gathering
+arxiv==1.4.8
+duckduckgo-search==4.1.1
+beautifulsoup4==4.12.3
+requests==2.31.0
+aiohttp==3.9.3  # For async HTTP requests
+httpx==0.27.0  # Modern HTTP client
+
+# Document processing
+python-docx==1.1.0
+PyPDF2==3.0.1
+markdown==3.5.2
+pdf2image==1.17.0  # For PDF processing
+Pillow==10.2.0  # For image processing
+
+# OpenAI and API clients
+openai==1.12.0
+tavily-python==0.3.1
+google-api-python-client==2.118.0
+
+# Utilities
+python-dotenv==1.0.1
+tqdm==4.66.2
+loguru==0.7.2
+tenacity==8.2.3  # For retrying operations
+pydantic==2.6.3  # For data validation
+typing-extensions==4.10.0  # For type hints
+numpy==1.26.4  # Required by many ML packages
+pandas==2.2.1  # For data manipulation
+
+# Development
+pytest==8.0.2
+black==24.2.0
+isort==5.13.2
+mypy==1.8.0
+flake8==7.0.0
+pytest-cov==4.1.0 
