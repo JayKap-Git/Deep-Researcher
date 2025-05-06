@@ -17,6 +17,7 @@ from backend.gather import DataGatherer
 from backend.knowledge_base import KnowledgeBase
 from backend.report_generator import ReportGenerator
 from backend.export import ReportExporter
+from backend.clarify import QueryClarifier
 
 # Configure logging
 logging.basicConfig(
@@ -39,6 +40,37 @@ def clear_knowledge_base():
         logger.error(f"Error clearing knowledge base: {str(e)}")
         raise
 
+def get_clarified_query() -> str:
+    """
+    Get a clarified research query through interactive conversation.
+    
+    Returns:
+        str: The final clarified query
+    """
+    clarifier = QueryClarifier()
+    print("\nWelcome to the Research Pipeline!")
+    print("Please enter your research query (e.g., 'What are the latest advancements in quantum computing?')")
+    
+    initial_query = input("Your query: ").strip()
+    if not initial_query:
+        print("Query cannot be empty. Please try again.")
+        return get_clarified_query()
+    
+    logger.info(f"\nInitial query: {initial_query}")
+    
+    # Use interactive clarification
+    final_query = clarifier.interactive_clarify(initial_query)
+    
+    if not final_query:
+        print("\nQuery clarification was incomplete or cancelled.")
+        print("Would you like to try again? (yes/no)")
+        if input().lower().startswith('y'):
+            return get_clarified_query()
+        else:
+            raise ValueError("Research cancelled by user")
+    
+    return final_query
+
 def main():
     """Test the research pipeline."""
     try:
@@ -53,21 +85,13 @@ def main():
         # Clear knowledge base
         clear_knowledge_base()
         
-        # Get research query
-        print("\nWelcome to the Research Pipeline!")
-        print("Please enter your research query (e.g., 'What are the latest advancements in quantum computing?')")
-        query = input("Your query: ")
+        # Get and clarify research query
+        query = get_clarified_query()
+        logger.info(f"\nTesting research pipeline with clarified query: {query}")
         
-        logger.info(f"\nTesting research pipeline with query: {query}")
-        
-        # Step 1: Clarify query
-        logger.info("\nStep 1: Clarifying query...")
-        clarified_query = planner.clarify_query(query)
-        logger.info(f"Clarified query: {clarified_query}")
-        
-        # Step 2: Generate research outline
-        logger.info("\nStep 2: Generating research outline...")
-        outline = planner.generate_outline(clarified_query)
+        # Step 1: Generate research outline
+        logger.info("\nStep 1: Generating research outline...")
+        outline = planner.generate_outline(query)
         logger.info("Generated outline:")
         logger.info(f"Title: {outline['title']}")
         logger.info("Sections:")
@@ -79,13 +103,16 @@ def main():
                     if "content" in subsection:
                         logger.info(f"    {subsection['content']}")
         
-        # Step 3: Generate research topics
-        logger.info("\nStep 3: Generating research topics...")
+        # Step 2: Generate research topics
+        logger.info("\nStep 2: Generating research topics...")
         topics = planner.generate_research_topics(outline)
         
-        # Step 4: Gather documents
-        logger.info("\nStep 4: Gathering documents...")
-        documents = gatherer.gather_data(topics)
+        # Add original query to topics for document filtering
+        topics["original_query"] = query
+        
+        # Step 3: Gather documents
+        logger.info("\nStep 3: Gathering documents...")
+        documents = gatherer.gather_data(topics, kb)  # Pass knowledge base instance
         
         # Store documents in knowledge base
         if documents:
@@ -94,9 +121,9 @@ def main():
         else:
             logger.warning("No documents found")
         
-        # Step 5: Generate report
-        logger.info("\nStep 5: Generating report...")
-        report = report_generator.generate_report(outline, clarified_query)
+        # Step 4: Generate report
+        logger.info("\nStep 4: Generating report...")
+        report = report_generator.generate_report(outline, query)
         
         # Log report details
         logger.info("\nReport generated successfully!")
@@ -120,8 +147,8 @@ def main():
                     if 'citations' in subsection:
                         logger.info(f"  Citations: {len(subsection['citations'])}")
         
-        # Step 6: Export report
-        logger.info("\nStep 6: Exporting report...")
+        # Step 5: Export report
+        logger.info("\nStep 5: Exporting report...")
         
         # Format report content for export
         report_content = f"# {report['title']}\n\n"

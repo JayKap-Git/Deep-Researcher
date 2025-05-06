@@ -17,6 +17,7 @@ from backend.config import (
     MODEL_TEMPERATURE,
     RATE_LIMITS
 )
+from backend.document_filter import DocumentFilter
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +74,9 @@ class DataGatherer:
             RATE_LIMITS["arxiv"]["requests_per_minute"],
             RATE_LIMITS["arxiv"]["retry_after"]
         )
+        
+        # Initialize document filter
+        self.document_filter = DocumentFilter()
     
     def _shorten_query(self, query: str, max_length: int = 300) -> str:
         """Shorten query to meet arXiv API limits while preserving meaning."""
@@ -122,12 +126,13 @@ class DataGatherer:
             logger.error(f"Error searching arXiv: {str(e)}")
             return []
     
-    def gather_data(self, topics: Dict[str, Any]) -> List[Document]:
+    def gather_data(self, topics: Dict[str, Any], knowledge_base=None) -> List[Document]:
         """
         Gather research data from arXiv based on the generated topics and search queries.
         
         Args:
             topics: Dictionary containing topics organized by section and their search queries
+            knowledge_base: Optional KnowledgeBase instance for filtering documents
             
         Returns:
             List of gathered documents
@@ -161,13 +166,39 @@ class DataGatherer:
                                 "section": section,
                                 "topic": topic,
                                 "published": result.published,
-                                "arxiv_id": result.arxiv_id
+                                "arxiv_id": result.arxiv_id,
+                                "id": result.arxiv_id  # Add ID for document filtering
                             }
                         )
                         all_documents.append(doc)
             
-            # Process and rank all gathered documents
+            # Process and validate gathered documents
             processed_docs = self.process_documents(all_documents)
+            
+            # Filter documents if knowledge base is provided
+            if knowledge_base and processed_docs:
+                # Create expanded query from topics
+                expanded_query = {
+                    "original_query": topics.get("original_query", ""),
+                    "focus_areas": list(topics["topics_by_section"].keys()),
+                    "key_topics": [topic for topics in topics["topics_by_section"].values() for topic in topics]
+                }
+                
+                # Get initial document count
+                initial_count = len(processed_docs)
+                
+                # Filter documents
+                self.document_filter.filter_documents(processed_docs, expanded_query, knowledge_base)
+                
+                # Get filtering stats
+                final_count = len([doc for doc in processed_docs if not doc.metadata.get("removed")])
+                stats = self.document_filter.get_filtering_stats(initial_count, final_count)
+                
+                logger.info("Document filtering stats:")
+                logger.info(f"- Original document count: {stats['original_document_count']}")
+                logger.info(f"- Final document count: {stats['final_document_count']}")
+                logger.info(f"- Documents removed: {stats['documents_removed']}")
+                logger.info(f"- Removal percentage: {stats['removal_percentage']}%")
             
             logger.info(f"Successfully gathered {len(processed_docs)} documents across {len(topics['topics_by_section'])} sections")
             return processed_docs
