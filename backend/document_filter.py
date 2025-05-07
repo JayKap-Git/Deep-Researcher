@@ -55,28 +55,50 @@ Evaluation Criteria:
 4. Document contains concrete, relevant data or findings
 5. Content aligns with the research scope
 
-Respond with a JSON object containing:
-{
-    "is_relevant": boolean,
-    "confidence_score": float (0-1),
-    "reasoning": string
-}"""
+IMPORTANT: Your response must be valid JSON with the following structure:
+{{
+    "is_relevant": true/false,
+    "confidence_score": 0.0-1.0,
+    "reasoning": "explanation for the decision"
+}}"""
 
             # Get relevance evaluation from LLM
-            response = self.llm.invoke(prompt).content
+            response = self.llm.invoke(
+                prompt,
+                response_format={ "type": "json_object" }  # Force JSON response
+            ).content
             
             try:
                 evaluation = json.loads(response)
-                return evaluation.get('is_relevant', False)
-            except json.JSONDecodeError:
-                logger.error(f"Error parsing LLM response: {response}")
+                
+                # Validate evaluation structure
+                if not isinstance(evaluation, dict):
+                    logger.error("Evaluation response is not a dictionary")
+                    return False
+                    
+                if 'is_relevant' not in evaluation:
+                    logger.error("Evaluation missing is_relevant field")
+                    return False
+                    
+                if not isinstance(evaluation['is_relevant'], bool):
+                    logger.error("is_relevant field is not a boolean")
+                    return False
+                    
+                # Log the evaluation for debugging
+                logger.debug(f"Document evaluation: {json.dumps(evaluation, indent=2)}")
+                
+                return evaluation['is_relevant']
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing evaluation response: {str(e)}")
+                logger.error(f"Raw response: {response}")
                 return False
                 
         except Exception as e:
             logger.error(f"Error evaluating document relevance: {str(e)}")
             return False
     
-    def filter_documents(self, documents: List[Document], expanded_query: Dict[str, Any], knowledge_base) -> None:
+    def filter_documents(self, documents: List[Document], expanded_query: Dict[str, Any], knowledge_base) -> List[Document]:
         """
         Filter out irrelevant documents from the knowledge base.
         
@@ -84,20 +106,30 @@ Respond with a JSON object containing:
             documents: List of documents to evaluate
             expanded_query: Dictionary containing expanded query details
             knowledge_base: KnowledgeBase instance to update
+            
+        Returns:
+            List of relevant documents
         """
         try:
             if not documents:
                 logger.warning("No documents to filter")
-                return
+                return []
+                
+            if not knowledge_base or not hasattr(knowledge_base, 'vectorstore'):
+                logger.error("Invalid knowledge base instance")
+                return documents
                 
             logger.info(f"Starting document filtering for {len(documents)} documents")
             
-            # Track documents to remove
+            # Track relevant documents
+            relevant_documents = []
             documents_to_remove = []
             
             # Evaluate each document
             for doc in documents:
-                if not self._evaluate_document_relevance(doc, expanded_query):
+                if self._evaluate_document_relevance(doc, expanded_query):
+                    relevant_documents.append(doc)
+                else:
                     documents_to_remove.append(doc)
             
             # Remove irrelevant documents from knowledge base
@@ -109,25 +141,44 @@ Respond with a JSON object containing:
                 for doc in documents_to_remove:
                     doc_id = doc.metadata.get('id')
                     if doc_id and doc_id not in seen_ids:
-                        seen_ids.add(doc_id)
-                        unique_ids_to_remove.append(doc_id)
+                        # Verify the document exists in the vector store before adding to removal list
+                        try:
+                            if hasattr(knowledge_base.vectorstore, '_collection'):
+                                # Check if ID exists in collection
+                                if doc_id in knowledge_base.vectorstore._collection.get():
+                                    seen_ids.add(doc_id)
+                                    unique_ids_to_remove.append(doc_id)
+                            else:
+                                seen_ids.add(doc_id)
+                                unique_ids_to_remove.append(doc_id)
+                        except Exception as e:
+                            logger.warning(f"Error checking document existence: {str(e)}")
+                            continue
                 
                 # Remove documents from vector store
                 if unique_ids_to_remove:
                     try:
-                        # Check if documents exist in collection before deleting
-                        existing_ids = set()
-                        for doc_id in unique_ids_to_remove:
-                            try:
-                                # Try to get the document to verify it exists
-                                knowledge_base.vectorstore._collection.get(ids=[doc_id])
-                                existing_ids.add(doc_id)
-                            except Exception:
-                                continue
-                        
-                        # Only delete documents that exist
-                        if existing_ids:
-                            knowledge_base.vectorstore._collection.delete(ids=list(existing_ids))
+                        # Check if vector store has delete method
+                        if hasattr(knowledge_base.vectorstore, 'delete'):
+                            # Delete in batches to handle potential failures
+                            batch_size = 10
+                            for i in range(0, len(unique_ids_to_remove), batch_size):
+                                batch = unique_ids_to_remove[i:i + batch_size]
+                                try:
+                                    knowledge_base.vectorstore.delete(ids=batch)
+                                except Exception as e:
+                                    logger.warning(f"Error deleting batch {i//batch_size + 1}: {str(e)}")
+                        elif hasattr(knowledge_base.vectorstore, '_collection'):
+                            # Try to delete using collection in batches
+                            batch_size = 10
+                            for i in range(0, len(unique_ids_to_remove), batch_size):
+                                batch = unique_ids_to_remove[i:i + batch_size]
+                                try:
+                                    knowledge_base.vectorstore._collection.delete(ids=batch)
+                                except Exception as e:
+                                    logger.warning(f"Error deleting batch {i//batch_size + 1} from collection: {str(e)}")
+                        else:
+                            logger.warning("Vector store does not support document deletion")
                             
                     except Exception as e:
                         logger.error(f"Error removing documents from vector store: {str(e)}")
@@ -136,9 +187,19 @@ Respond with a JSON object containing:
             else:
                 logger.info("No irrelevant documents found")
             
+            # Get filtering stats
+            stats = self.get_filtering_stats(len(documents), len(relevant_documents))
+            logger.info("Document filtering stats:")
+            logger.info(f"- Original document count: {stats['original_document_count']}")
+            logger.info(f"- Final document count: {stats['final_document_count']}")
+            logger.info(f"- Documents removed: {stats['documents_removed']}")
+            logger.info(f"- Removal percentage: {stats['removal_percentage']}%")
+            
+            return relevant_documents
+            
         except Exception as e:
             logger.error(f"Error filtering documents: {str(e)}")
-            raise
+            return documents  # Return original documents in case of error
     
     def get_filtering_stats(self, original_count: int, final_count: int) -> Dict[str, Any]:
         """

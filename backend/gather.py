@@ -78,28 +78,12 @@ class DataGatherer:
         # Initialize document filter
         self.document_filter = DocumentFilter()
     
-    def _shorten_query(self, query: str, max_length: int = 300) -> str:
-        """Shorten query to meet arXiv API limits while preserving meaning."""
-        if len(query) <= max_length:
-            return query
-            
-        # Split into words and keep the most important ones
-        words = query.split()
-        if len(words) <= 10:  # minimum words to keep
-            return query
-            
-        # Keep the first and last few words to preserve context
-        shortened = words[:5] + words[-5:]
-        return " ".join(shortened)
-
-    def search_arxiv(self, query: str, max_results: int = 5) -> List[ArxivResult]:
+    def search_arxiv(self, query: str, max_results: int = 10) -> List[ArxivResult]:
         """Search arXiv for research papers."""
         try:
             self.arxiv_limiter.wait_if_needed()
             
-            # Shorten query if needed
-            query = self._shorten_query(query)
-            logger.info(f"Searching arXiv with query: {query}")
+            logger.info(f"Searching arXiv with comprehensive query: {query}")
             
             client = arxiv.Client()
             search = arxiv.Search(
@@ -119,7 +103,7 @@ class DataGatherer:
                     arxiv_id=result.entry_id.split('/')[-1]
                 ))
             
-            logger.info(f"Found {len(results)} results for query: {query}")
+            logger.info(f"Found {len(results)} results for comprehensive query: {query}")
             return results
             
         except Exception as e:
@@ -144,6 +128,9 @@ class DataGatherer:
             for section, section_topics in topics["topics_by_section"].items():
                 logger.info(f"Gathering data for section: {section}")
                 
+                # Limit to 3 topics per section
+                section_topics = section_topics[:3]
+                
                 for topic in section_topics:
                     search_query = topics["search_queries"].get(topic)
                     if not search_query:
@@ -151,10 +138,10 @@ class DataGatherer:
                         continue
                         
                     logger.info(f"Gathering data for topic: {topic}")
-                    logger.info(f"Using search query: {search_query}")
+                    logger.info(f"Using comprehensive search query: {search_query}")
                     
-                    # Gather from arXiv
-                    arxiv_results = self.search_arxiv(search_query)
+                    # Gather from arXiv with increased results per query
+                    arxiv_results = self.search_arxiv(search_query, max_results=10)
                     for result in arxiv_results:
                         doc = Document(
                             page_content=result.abstract,
@@ -167,7 +154,8 @@ class DataGatherer:
                                 "topic": topic,
                                 "published": result.published,
                                 "arxiv_id": result.arxiv_id,
-                                "id": result.arxiv_id  # Add ID for document filtering
+                                "id": result.arxiv_id,  # Add ID for document filtering
+                                "comprehensive_query": search_query  # Store the comprehensive query
                             }
                         )
                         all_documents.append(doc)
@@ -181,7 +169,7 @@ class DataGatherer:
                 expanded_query = {
                     "original_query": topics.get("original_query", ""),
                     "focus_areas": list(topics["topics_by_section"].keys()),
-                    "key_topics": [topic for topics in topics["topics_by_section"].values() for topic in topics]
+                    "key_topics": [topic for topics in topics["topics_by_section"].values() for topic in topics[:3]]  # Limit to 3 topics per section
                 }
                 
                 # Get initial document count

@@ -123,29 +123,25 @@ def main():
         
         # Step 4: Generate report
         logger.info("\nStep 4: Generating report...")
-        report = report_generator.generate_report(outline, query)
+        report = report_generator.generate_report(outline, kb)
         
         # Log report details
         logger.info("\nReport generated successfully!")
         logger.info(f"Report title: {report['title']}")
         logger.info(f"Number of sections: {len(report['sections'])}")
-        logger.info(f"Number of citations: {len(report['citations'])}")
+        logger.info(f"Number of citations: {len(report.get('citations', []))}")
         
         # Print report sections
         logger.info("\nReport sections:")
         for section in report['sections']:
-            logger.info(f"\nSection: {section['title']}")
+            logger.info(f"\nSection: {section['section_title']}")
             if 'content' in section:
                 logger.info(f"Content: {section['content']}")
-            if 'citations' in section:
-                logger.info(f"Citations: {len(section['citations'])}")
             if 'subsections' in section:
                 for subsection in section['subsections']:
-                    logger.info(f"\n  Subsection: {subsection['title']}")
+                    logger.info(f"\n  Subsection: {subsection['subsection_title']}")
                     if 'content' in subsection:
                         logger.info(f"  Content: {subsection['content']}")
-                    if 'citations' in subsection:
-                        logger.info(f"  Citations: {len(subsection['citations'])}")
         
         # Step 5: Export report
         logger.info("\nStep 5: Exporting report...")
@@ -153,19 +149,19 @@ def main():
         # Format report content for export
         report_content = f"# {report['title']}\n\n"
         for section in report['sections']:
-            report_content += f"## {section['title']}\n\n"
+            report_content += f"## {section['section_title']}\n\n"
             if 'content' in section:
                 report_content += f"{section['content']}\n\n"
             if 'subsections' in section:
                 for subsection in section['subsections']:
-                    report_content += f"### {subsection['title']}\n\n"
+                    report_content += f"### {subsection['subsection_title']}\n\n"
                     if 'content' in subsection:
                         report_content += f"{subsection['content']}\n\n"
         
         # Export to different formats
         try:
             filename = report['title'].lower().replace(' ', '_')
-            pdf_path = exporter.export_pdf(report_content, report['citations'], filename)
+            pdf_path = exporter.export_pdf(report_content, report.get('citations', []), filename)
             logger.info(f"Report exported to PDF: {pdf_path}")
             
             docx_path = exporter.export_docx(report, filename)

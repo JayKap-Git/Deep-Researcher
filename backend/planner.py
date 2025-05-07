@@ -116,19 +116,23 @@ class ResearchPlanner:
             For each topic, create an optimized search query that will yield the most relevant results.
             
             The output should be organized by sections from the outline, with each section containing:
-            1. A list of specific research topics
-            2. For each topic, an optimized search query
+            1. A list of specific research topics (maximum 3 per section)
+            2. For each topic, a comprehensive search query that combines multiple aspects
             
             Guidelines:
-            - Focus on concrete, specific topics rather than broad categories
-            - Each search query should be optimized for both academic papers and web articles
+            - Focus on creating 3 comprehensive topics per section that cover all important aspects
+            - Each search query should be comprehensive and combine multiple related aspects
             - Make sure topics align with the section's focus and purpose
-            - Include key technical terms and concepts in search queries
-            - Limit each section to 3-5 focused topics
+            - Include key technical terms, concepts, and recent developments in search queries
+            - Combine related subtopics into broader, more comprehensive topics
             - Ensure each topic has a corresponding search query with the exact same name
-            - Keep topic names concise and consistent
-            - For sections with subsections, combine the subsection topics into a single flat list
+            - Keep topic names concise but descriptive
+            - For sections with subsections, combine related subsection topics into comprehensive topics
             - Do not create nested structures in the topics_by_section dictionary
+            - Each search query should be comprehensive enough to cover multiple related aspects
+            
+            Example of a comprehensive search query:
+            "Recent advances in quantum computing hardware, algorithms, and applications in cryptography and machine learning"
             
             {format_instructions}
             """),
@@ -178,55 +182,65 @@ class ResearchPlanner:
             logger.error(f"Error generating outline: {str(e)}")
             raise
 
-    def generate_research_topics(self, outline: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_research_topics(self, outline: dict) -> dict:
         """
-        Generate specific research topics and search queries based on the outline.
-        
+        Generate 3 comprehensive research topics and search queries for the entire research, not per section.
         Args:
-            outline: Generated research outline
-            
+            outline: The research outline dictionary
         Returns:
-            Dictionary containing topics organized by section and their search queries
+            Dictionary with 'comprehensive_topics' and 'comprehensive_search_queries'
         """
+        prompt = f"""You are a research assistant helping to create comprehensive research topics and search queries for a research project.
+
+Research Outline Title: {outline.get('title', '')}
+Key Questions: {outline.get('key_questions', [])}
+Sections: {[section.get('section_title', '') for section in outline.get('sections', [])]}
+
+Guidelines:
+- Generate exactly 3 comprehensive research topics that each cover multiple aspects of the research question and span across several sections if possible.
+- Each topic should be broad and integrative, not narrow or granular.
+- For each topic, generate a single comprehensive search query that combines multiple aspects and keywords from the research outline and key questions.
+- The queries should be suitable for academic search engines (e.g., arXiv, Semantic Scholar).
+- Output as a JSON object with two lists: 'comprehensive_topics' and 'comprehensive_search_queries'.
+
+Output JSON schema:
+{{
+  "comprehensive_topics": ["topic1", "topic2", "topic3"],
+  "comprehensive_search_queries": ["query1", "query2", "query3"]
+}}"""
+        logger.info("Sending prompt to LLM for comprehensive topic and query generation...")
+        logger.info(f"Prompt: {prompt}")
+        response = self.model.invoke(prompt).content
+        logger.info(f"Raw response: {response}")
         try:
-            # Convert outline to JSON string for the prompt
-            outline_json = json.dumps(outline, indent=2)
+            # Clean the response by removing code block markers if present
+            cleaned_response = response.replace('```json', '').replace('```', '').strip()
+            data = json.loads(cleaned_response)
+            topics = data.get("comprehensive_topics", [])
+            queries = data.get("comprehensive_search_queries", [])
+            if len(topics) != 3 or len(queries) != 3:
+                logger.warning("LLM did not return exactly 3 topics and 3 queries. Truncating or padding as needed.")
+                topics = (topics + [""]*3)[:3]
+                queries = (queries + [""]*3)[:3]
+            logger.info(f"Comprehensive topics: {topics}")
+            logger.info(f"Comprehensive search queries: {queries}")
             
-            # Get format instructions
-            format_instructions = self.topics_parser.get_format_instructions()
+            # Convert to the format expected by gather.py
+            topics_by_section = {}
+            for i, topic in enumerate(topics):
+                section_name = f"Research Topic {i+1}"
+                topics_by_section[section_name] = [topic]
             
-            # Format the prompt with the outline and parser instructions
-            prompt = self.topics_prompt.format_messages(
-                query=outline["title"],
-                outline_json=outline_json,
-                format_instructions=format_instructions
-            )
-            
-            logger.info("Sending prompt to LLM for topic generation...")
-            logger.info(f"Using model: {self.model.model_name} with temperature: {self.model.temperature}")
-            
-            # Get response from LLM
-            response = self.model.invoke(prompt)
-            
-            # Parse the response
-            logger.info("Received response from LLM:")
-            logger.info(f"Raw response: {response.content}")
-            
-            # Parse the response using the Pydantic model
-            topics_data = self.topics_parser.parse(response.content)
-            
-            # Convert to dictionary
-            result = topics_data.model_dump()
-            
-            logger.info("Parsed topics:")
-            logger.info(f"Topics by section: {result['topics_by_section']}")
-            logger.info(f"Search queries: {result['search_queries']}")
-            
-            return result
-            
+            return {
+                "topics_by_section": topics_by_section,
+                "search_queries": dict(zip(topics, queries))
+            }
         except Exception as e:
-            logger.error(f"Error generating research topics: {str(e)}")
-            raise
+            logger.error(f"Error parsing LLM response: {str(e)}")
+            return {
+                "topics_by_section": {},
+                "search_queries": {}
+            }
 
     def clarify_query(self, query: str) -> str:
         """

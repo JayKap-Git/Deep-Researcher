@@ -184,12 +184,12 @@ class ReportExporter:
             doc = DocxDocument()
             
             # Add title
-            doc.add_heading(report['title'], 0)
+            doc.add_heading(report.get('title', 'Untitled Report'), 0)
             
             # Add sections
-            for section in report['sections']:
+            for section in report.get('sections', []):
                 # Add section title
-                doc.add_heading(section['title'], 1)
+                doc.add_heading(section.get('section_title', 'Untitled Section'), 1)
                 
                 # Add section content
                 if 'content' in section and section['content']:
@@ -199,23 +199,23 @@ class ReportExporter:
                 if 'subsections' in section:
                     for subsection in section['subsections']:
                         # Add subsection title
-                        doc.add_heading(subsection['title'], 2)
+                        doc.add_heading(subsection.get('subsection_title', 'Untitled Subsection'), 2)
                         
                         # Add subsection content
                         if 'content' in subsection and subsection['content']:
                             doc.add_paragraph(subsection['content'])
             
-            # Add references
-            if 'citations' in report and report['citations']:
-                doc.add_heading('References', 1)
-                for citation in report['citations']:
-                    doc.add_paragraph(citation['text'])
-            
             # Add glossary if it exists
-            if 'glossary' in report and report['glossary']:
+            if report.get('glossary'):
                 doc.add_heading('Glossary', 1)
-                for term in report['glossary']:
-                    doc.add_paragraph(f"**{term}**: [Definition to be added]")
+                for entry in report['glossary']:
+                    doc.add_paragraph(f"{entry['term']}: {entry['definition']}")
+            
+            # Add references
+            if report.get('references'):
+                doc.add_heading('References', 1)
+                for ref in report['references']:
+                    doc.add_paragraph(f"[{ref['number']}] {ref['text']}")
             
             # Save the document
             output_path = os.path.join(EXPORTS_DIR, f"{filename}.docx")
