@@ -154,6 +154,8 @@ Generate the outline:"""}
         try:
             # Process each section
             processed_sections = []
+            all_content = []  # Collect all content for technical term extraction
+            
             for section in outline.get('sections', []):
                 # Ensure section has required fields
                 if 'section_title' not in section:
@@ -170,14 +172,24 @@ Generate the outline:"""}
                             subsection['content'] = ''
                 
                 try:
-                    processed_section = self.research_generator.process_section(section, kb, outline.get('title', ''))
+                    processed_section = self.process_section(section, kb, outline.get('title', ''))
                     processed_sections.append(processed_section)
+                    
+                    # Collect content for technical term extraction
+                    all_content.append(processed_section.get('content', ''))
+                    for subsection in processed_section.get('subsections', []):
+                        all_content.append(subsection.get('content', ''))
+                        
                 except Exception as e:
                     logger.error(f"Error processing section {section.get('section_title')}: {str(e)}")
                     continue
-                
-            # Generate glossary
-            glossary = self._generate_glossary()
+            
+            # Extract technical terms from all content at once
+            combined_content = "\n\n".join(all_content)
+            technical_terms = self.research_generator.extract_all_technical_terms(combined_content)
+            
+            # Generate glossary from collected terms
+            glossary = self._generate_glossary(technical_terms)
             
             # Generate references
             references = self._generate_references()
@@ -198,15 +210,77 @@ Generate the outline:"""}
             logger.error(f"Error generating report: {str(e)}")
             return {}
     
-    def _generate_glossary(self) -> List[Dict[str, str]]:
+    def process_section(self, section: Dict[str, Any], kb, query: str) -> Dict[str, Any]:
+        """
+        Process a section and its subsections.
+        
+        Args:
+            section: Section information
+            kb: Knowledge base instance
+            query: The research query
+            
+        Returns:
+            Processed section with content
+        """
+        logger.info(f"\nProcessing main section: {section.get('section_title', '')}")
+        # Generate content for main section
+        content = self.research_generator.generate_section_content(section, kb, query, is_subsection=False)
+        
+        # Process subsections if they exist
+        processed_subsections = []
+        if 'subsections' in section:
+            logger.info(f"Found {len(section['subsections'])} subsections to process")
+            for subsection in section['subsections']:
+                # Ensure subsection has required fields
+                if not isinstance(subsection, dict):
+                    subsection = {'subsection_title': subsection}
+                elif 'subsection_title' not in subsection:
+                    continue
+                    
+                logger.info(f"\n  Processing subsection: {subsection.get('subsection_title', '')}")
+                # Create a simplified subsection structure without nested subsections
+                simple_subsection = {
+                    'section_title': subsection['subsection_title'],
+                    'content': subsection.get('content', '')
+                }
+                
+                logger.info("  Creating simplified subsection structure (no nested subsections allowed)")
+                # Generate content for subsection
+                subsection_content = self.research_generator.generate_section_content(
+                    simple_subsection,
+                    kb,
+                    query,
+                    is_subsection=True  # Mark as subsection to enforce different constraints
+                )
+                
+                if subsection_content:
+                    logger.info("  Successfully generated subsection content")
+                else:
+                    logger.warning("  Failed to generate valid subsection content")
+                
+                processed_subsections.append({
+                    'subsection_title': subsection['subsection_title'],
+                    'content': subsection_content
+                })
+            
+        return {
+            'section_title': section.get('section_title', ''),
+            'content': content,
+            'subsections': processed_subsections
+        }
+    
+    def _generate_glossary(self, technical_terms: List[str]) -> List[Dict[str, str]]:
         """
         Generate a glossary from collected technical terms.
         
+        Args:
+            technical_terms: List of technical terms
+            
         Returns:
             List of glossary entries
         """
         glossary = []
-        for term in sorted(self.research_generator.technical_terms):
+        for term in technical_terms:
             # Generate definition using LLM
             messages = [
                 {"role": "system", "content": "You are a technical term definition generator. Generate clear and concise definitions for technical terms."},

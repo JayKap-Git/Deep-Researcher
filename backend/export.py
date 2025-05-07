@@ -261,6 +261,54 @@ class ReportExporter:
             logger.error(f"Error exporting HTML: {str(e)}")
             raise
 
+    def _format_report_content(self, report: Dict[str, Any]) -> str:
+        """Format report content for export."""
+        content = []
+        
+        # Add title
+        content.append(f"# {report['title']}\n")
+        
+        # Add date
+        if 'date' in report:
+            content.append(f"*Generated on: {report['date']}*\n")
+        
+        # Process sections
+        for section in report['sections']:
+            # Add section title
+            content.append(f"\n## {section['section_title']}\n")
+            
+            # Add section content
+            if section.get('content'):
+                content.append(f"{section['content']}\n")
+            
+            # Process subsections
+            if section.get('subsections'):
+                for subsection in section['subsections']:
+                    # Add subsection title
+                    content.append(f"\n### {subsection['subsection_title']}\n")
+                    
+                    # Add subsection content
+                    if subsection.get('content'):
+                        content.append(f"{subsection['content']}\n")
+        
+        # Add citations if available
+        if any(section.get('citations') for section in report['sections']):
+            content.append("\n## References\n")
+            all_citations = []
+            for section in report['sections']:
+                all_citations.extend(section.get('citations', []))
+            
+            # Remove duplicates while maintaining order
+            unique_citations = []
+            for citation in all_citations:
+                if citation not in unique_citations:
+                    unique_citations.append(citation)
+            
+            for i, citation in enumerate(unique_citations, 1):
+                content.append(f"{i}. {citation}\n")
+        
+        return "\n".join(content)
+
 # Example usage
 if __name__ == "__main__":
     exporter = ReportExporter()

@@ -115,7 +115,28 @@ class ResearchPipeline:
             
             # Step 4: Generate report (80% of progress)
             st.write("📊 Generating comprehensive report...")
-            report = self.report_generator.generate_report(outline, self.kb)
+            
+            # Initialize empty report structure
+            report = {
+                'title': outline['title'],
+                'date': datetime.now().isoformat(),
+                'sections': [],
+                'citations': []
+            }
+            
+            # Process each section individually
+            total_sections = len(outline['sections'])
+            for idx, section in enumerate(outline['sections'], 1):
+                st.write(f"Processing section {idx}/{total_sections}: {section['section_title']}")
+                
+                # Process single section
+                processed_section = self.report_generator.process_section(section, self.kb, outline['title'])
+                report['sections'].append(processed_section)
+                
+                # Update progress
+                progress = 60 + (20 * (idx / total_sections))
+                progress_bar.progress(int(progress))
+            
             results["outputs"]["report"] = report
             progress_bar.progress(80)
             

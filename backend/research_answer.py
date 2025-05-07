@@ -35,7 +35,11 @@ class ResearchAnswerGenerator:
         self.used_citations = defaultdict(set)  # Track citations used in each section
         self.technical_terms = set()  # Track technical terms for glossary
         self.max_section_length = 3000  # Maximum length of a section in words
-        self.max_citations_per_section = 15  # Maximum number of citations per section
+        self.max_citations_per_section = 20  # Maximum number of citations per section
+        self.max_citations_per_subsection = 10  # Maximum number of citations per subsection
+        self.max_subsection_length = 1000  # Maximum length of a subsection in words
+        self.min_subsection_length = 150  # Minimum length of a subsection in words
+        self.extract_terms = False  # Flag to control technical term extraction
         logger.info(f"Initialized ResearchAnswerGenerator with model: {BASE_MODEL} and temperature: {MODEL_TEMPERATURE}")
 
     def generate_answer(self, query: str, documents: List[Document]) -> Dict[str, Any]:
@@ -158,12 +162,13 @@ Answer:"""
         """Get the current chat history."""
         return self.chat_history.copy()
     
-    def _validate_content(self, content: str) -> bool:
+    def _validate_content(self, content: str, is_subsection: bool = False) -> bool:
         """
         Validate the generated content.
         
         Args:
             content: The content to validate
+            is_subsection: Whether this is a subsection content
             
         Returns:
             True if content is valid, False otherwise
@@ -174,50 +179,145 @@ Answer:"""
             
         # Check content length
         word_count = len(content.split())
-        if word_count > self.max_section_length:
+        max_length = self.max_subsection_length if is_subsection else self.max_section_length
+        min_length = self.min_subsection_length if is_subsection else 50
+        
+        if word_count > max_length:
             logger.warning(f"Content exceeds maximum length: {word_count} words")
+            return False
+            
+        if word_count < min_length:
+            logger.warning(f"Content too short: {word_count} words")
             return False
             
         # Check for citations
         citations = re.findall(r'\[\d+\]', content)
-        if len(set(citations)) > self.max_citations_per_section:
+        max_citations = self.max_citations_per_subsection if is_subsection else self.max_citations_per_section
+        
+        if len(set(citations)) > max_citations:
             logger.warning(f"Content exceeds maximum unique citations: {len(set(citations))} citations")
             return False
             
-        # Check for minimum content
-        if word_count < 50:  # Reduced minimum word count
-            logger.warning(f"Content too short: {word_count} words")
-            return False
-            
-        # Check for balanced citations
-        if len(citations) < 1:  # Reduced minimum citation requirement
+        if len(citations) < 1:
             logger.warning("Content has too few citations")
             return False
+
+        # Additional validation for subsections
+        if is_subsection:
+            # Split content into paragraphs
+            paragraphs = [p.strip().lower() for p in content.split('\n\n') if p.strip()]
+            
+            if len(paragraphs) > 3:
+                logger.warning("Subsection has too many paragraphs")
+                return False
+                
+            if len(paragraphs) < 1:
+                logger.warning("Subsection has too few paragraphs")
+                return False
+
+            # Check first paragraph for introduction-like content
+            first_para = paragraphs[0]
+            intro_indicators = [
+                'introduction', 'this section', 'in this part', 'overview',
+                'we will discuss', 'this subsection', 'this paper', 'this report',
+                'in the following', 'here we', 'we present', 'we describe',
+                'we explore', 'we examine', 'we investigate', 'we analyze',
+                'we review', 'we study', 'we focus on', 'we consider'
+            ]
+            if any(indicator in first_para for indicator in intro_indicators):
+                logger.warning("Subsection contains introduction-like content")
+                return False
+
+            # Check last paragraph for conclusion-like content
+            last_para = paragraphs[-1]
+            conclusion_indicators = [
+                'conclusion', 'in summary', 'to summarize', 'finally',
+                'in conclusion', 'thus', 'therefore', 'overall',
+                'to conclude', 'in closing', 'ultimately', 'in the end',
+                'taken together', 'as shown above', 'as discussed',
+                'as demonstrated', 'as illustrated', 'as presented',
+                'as outlined', 'as described', 'as mentioned',
+                'looking ahead', 'future work', 'future research',
+                'moving forward', 'next steps'
+            ]
+            if any(indicator in last_para for indicator in conclusion_indicators):
+                logger.warning("Subsection contains conclusion-like content")
+                return False
+
+            # Check for meta-references and transitions
+            meta_indicators = [
+                'as mentioned earlier', 'as discussed above',
+                'as shown previously', 'in the previous section',
+                'in the next section', 'following section',
+                'preceding section', 'subsequent section',
+                'above discussion', 'below we', 'later we',
+                'furthermore', 'moreover', 'additionally',
+                'in addition', 'besides', 'also'
+            ]
+            for para in paragraphs:
+                if any(indicator in para for indicator in meta_indicators):
+                    logger.warning("Subsection contains meta-references or transitions")
+                    return False
+            
+            # Check for balanced citation distribution
+            citations_per_para = []
+            current_para_citations = 0
+            for line in content.split('\n'):
+                current_para_citations += len(re.findall(r'\[\d+\]', line))
+                if not line.strip():  # Empty line indicates paragraph break
+                    if current_para_citations > 0:
+                        citations_per_para.append(current_para_citations)
+                    current_para_citations = 0
+            if current_para_citations > 0:  # Add citations from last paragraph
+                citations_per_para.append(current_para_citations)
+            
+            if not citations_per_para:
+                logger.warning("No citations found in paragraphs")
+                return False
+            
+            # Check if citations are too concentrated in one paragraph
+            max_citations_per_para = max(citations_per_para)
+            total_citations = sum(citations_per_para)
+            if max_citations_per_para > total_citations * 0.7:  # More than 70% citations in one paragraph
+                logger.warning("Citations are not well distributed across paragraphs")
+                return False
             
         return True
         
     def _extract_technical_terms(self, content: str):
         """Extract technical terms from content."""
-        # Use LLM to identify technical terms
-        messages = [
-            {"role": "system", "content": "You are a technical term extractor. Identify technical terms and jargon in the given text."},
-            {"role": "user", "content": f"Extract technical terms and jargon from the following text:\n\n{content}"}
-        ]
-        
+        # Skip technical term extraction if flag is False
+        if not self.extract_terms:
+            return set()
+            
         try:
+            messages = [
+                {"role": "system", "content": "You are a technical term extractor. Identify technical terms and jargon in the given text."},
+                {"role": "user", "content": f"Extract technical terms and jargon from the following text:\n\n{content}"}
+            ]
+            
             response = self.client.chat.completions.create(
                 model=BASE_MODEL,
                 messages=messages,
-                temperature=0.7,
-                max_tokens=200
+                temperature=0.3,
+                max_tokens=500
             )
             
-            terms = response.choices[0].message.content.strip().split('\n')
-            self.technical_terms.update(term.strip() for term in terms if term.strip())
+            terms = set(response.choices[0].message.content.split('\n'))
+            return {term.strip() for term in terms if term.strip()}
             
         except Exception as e:
             logger.error(f"Error extracting technical terms: {str(e)}")
-            
+            return set()
+
+    def extract_all_technical_terms(self, report_content: str):
+        """Extract technical terms from the entire report at once."""
+        self.extract_terms = True  # Enable term extraction temporarily
+        all_terms = self._extract_technical_terms(report_content)
+        self.technical_terms.update(all_terms)
+        self.extract_terms = False  # Disable term extraction again
+        return self.technical_terms
+
     def generate_section_content(self, section: Dict[str, Any], kb, query: str, is_subsection: bool = False) -> str:
         """
         Generate content for a section.
@@ -234,14 +334,28 @@ Answer:"""
         section_title = section.get('section_title', '')
         section_content = section.get('content', '')
         
+        logger.info(f"Generating content for {'subsection' if is_subsection else 'section'}: {section_title}")
+        
         # Construct section query
-        section_query = f"{query} {section_title} {section_content}"
+        if is_subsection:
+            # For subsections, focus query on the specific topic
+            section_query = f"{section_title}: {section_content}"
+            logger.info("Using focused subsection query without broader context")
+        else:
+            # For main sections, include broader context
+            section_query = f"{query}: {section_title}: {section_content}"
+            logger.info("Using full section query with broader context")
         
         # Get relevant documents
-        relevant_docs = kb.search(section_query, k=self.max_citations_per_section)
+        k = self.max_citations_per_subsection if is_subsection else self.max_citations_per_section
+        logger.info(f"Using maximum {k} citations for {'subsection' if is_subsection else 'section'}")
+        
+        relevant_docs = kb.search(section_query, k=k)
         if not relevant_docs:
-            logger.warning(f"No relevant documents found for section: {section_title}")
+            logger.warning(f"No relevant documents found for {'subsection' if is_subsection else 'section'}: {section_title}")
             return ""
+            
+        logger.info(f"Found {len(relevant_docs)} relevant documents")
             
         # Prepare context from relevant documents
         context = "\n\n".join([f"Document {i+1}:\n{doc.page_content}" for i, doc in enumerate(relevant_docs)])
@@ -250,11 +364,68 @@ Answer:"""
         for i, doc in enumerate(relevant_docs, 1):
             citation_text = f"[{i}] {doc.metadata.get('title', '')} ({doc.metadata.get('year', '')})"
             self.citation_map[citation_text] = i
-            
-        # Generate content using LLM
-        messages = [
-            {"role": "system", "content": """You are a research content generator specializing in academic writing. Your task is to generate well-structured, 
-academic content for research report sections. You should:
+
+        # Different prompts for main sections and subsections
+        if is_subsection:
+            logger.info("Using subsection-specific prompt with strict formatting rules")
+            system_content = """You are a research content generator specializing in academic writing. Your task is to generate focused, direct content for a subsection.
+
+IMPORTANT: This is a SUBSECTION, not a full section. Keep content focused and avoid any section-like structure.
+
+STRICT FORMATTING RULES:
+1. NO introductions or conclusions
+2. NO overview statements
+3. NO transitions between topics
+4. NO meta-references
+5. NO broad context setting
+6. NO phrases like "as mentioned", "furthermore", "moreover"
+7. NO references to other sections
+8. NO future work discussions
+9. NO subsection divisions
+
+CONTENT REQUIREMENTS:
+1. Start DIRECTLY with specific, relevant information
+2. Use precise, technical language
+3. Support claims with citations [1], [2]
+4. Focus ONLY on the specific topic
+5. Keep content concise and focused
+6. Present information in a logical sequence
+7. Use academic tone
+8. Distribute citations evenly
+
+STRUCTURE:
+- Write 2-3 focused paragraphs
+- Each paragraph should directly address the topic
+- Start with specific information, not context
+- Support claims with evidence
+- NO concluding remarks
+- NO transition sentences"""
+
+            user_content = f"""Generate focused subsection content about: {section_title}
+
+Topic Details: {section_content}
+
+Available Sources:
+{context}
+
+Requirements:
+1. 2-3 paragraphs maximum
+2. {max(1, self.max_citations_per_subsection//4)}-{self.max_citations_per_subsection} citations
+3. {self.min_subsection_length}-{self.max_subsection_length} words
+4. Start with specific information
+5. End with substantive content
+6. Distribute citations evenly
+7. NO transitions
+8. NO meta-references
+9. NO introductions or conclusions
+10. NO subsection divisions
+
+Generate the subsection content:"""
+
+        else:
+            # Keep existing main section prompt
+            system_content = """You are a research content generator specializing in academic writing. Your task is to generate well-structured, 
+academic content for main sections of a research report. You should:
 1. Use formal academic language
 2. Integrate information from multiple sources
 3. Use proper citation format [1], [2], etc.
@@ -264,8 +435,9 @@ academic content for research report sections. You should:
 7. Stay within word limits
 8. Ensure balanced use of citations
 9. Focus on key findings and insights
-10. Maintain objectivity"""},
-            {"role": "user", "content": f"""Generate content for the following section of a research report.
+10. Include proper section structure"""
+
+            user_content = f"""Generate content for the following main section of a research report.
 
 Section Title: {section_title}
 Section Description: {section_content}
@@ -283,44 +455,48 @@ Requirements:
 6. Maintain academic writing style
 7. Focus on synthesizing information from multiple sources
 8. Use technical terms appropriately
-9. Ensure logical flow between paragraphs
-10. End with a brief summary or conclusion
-
-Generate the section content:"""}
+9. Ensure logical flow between paragraphs"""
+            
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content}
         ]
         
         try:
             response = self.client.chat.completions.create(
                 model=BASE_MODEL,
                 messages=messages,
-                temperature=0.7,
-                max_tokens=2000
+                temperature=0.4 if is_subsection else 0.7,  # Lower temperature for subsections
+                max_tokens=800 if is_subsection else 2000  # Fewer tokens for subsections
             )
             
             content = response.choices[0].message.content.strip()
             
             # Validate content
-            if not self._validate_content(content):
-                logger.warning(f"Generated content for section {section_title} failed validation")
+            if not self._validate_content(content, is_subsection):
+                logger.warning(f"Generated content for {'subsection' if is_subsection else 'section'} {section_title} failed validation")
+                logger.info("Attempting content generation again with adjusted parameters")
                 # Try one more time with adjusted parameters
-                messages[1]["content"] += "\n\nNote: Previous attempt failed validation. Please ensure proper citation usage and content length."
+                messages[1]["content"] += "\n\nNote: Previous attempt failed validation. Please ensure proper formatting and content requirements are met."
                 response = self.client.chat.completions.create(
                     model=BASE_MODEL,
                     messages=messages,
-                    temperature=0.5,  # Reduce temperature for more focused output
-                    max_tokens=2000
+                    temperature=0.3 if is_subsection else 0.5,  # Even lower temperature for retry
+                    max_tokens=600 if is_subsection else 1500
                 )
                 content = response.choices[0].message.content.strip()
-                if not self._validate_content(content):
+                if not self._validate_content(content, is_subsection):
+                    logger.warning("Second attempt at content generation also failed validation")
                     return ""
+                else:
+                    logger.info("Second attempt at content generation succeeded")
+            else:
+                logger.info("Content generation succeeded on first attempt")
                 
-            # Extract technical terms
-            self._extract_technical_terms(content)
-            
             return content
             
         except Exception as e:
-            logger.error(f"Error generating content for section {section_title}: {str(e)}")
+            logger.error(f"Error generating content for {'subsection' if is_subsection else 'section'} {section_title}: {str(e)}")
             return ""
             
     def process_section(self, section: Dict[str, Any], kb, query: str) -> Dict[str, Any]:

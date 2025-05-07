@@ -96,14 +96,11 @@ class ResearchPlanner:
             - Ensure each section builds upon previous ones
             - Include 3-5 key questions that guide the research
             - Specify 2-3 types of sources needed
-            - IMPORTANT: Create exactly 6 sections by combining related topics if necessary
-            - Suggested section structure:
-              1. Introduction and Background
-              2. Data and Preprocessing
-              3. Model Architecture and Optimization
-              4. Implementation and Deployment
-              5. Evaluation and Validation
-              6. Applications and Future Directions
+            - IMPORTANT: Create any no. of sections necessary for the research query
+            - Sections that must be there :
+              . Introduction
+              . KEYWORDS <MAX 20> <BEFORE THE END>
+              . Applications <IN THE END>
             
             {format_instructions}
             """),
