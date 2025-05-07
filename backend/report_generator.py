@@ -29,7 +29,16 @@ class ReportGenerator:
         self.used_citations = defaultdict(set)  # Track citations used in each section
         self.section_hierarchy = {}  # Track section hierarchy and relationships
         self.technical_terms = set()  # Track technical terms for glossary
+        self.chat_history = []  # Track chat history for context
         
+    def _add_to_chat_history(self, role: str, content: str):
+        """Add a message to the chat history."""
+        self.chat_history.append({"role": role, "content": content})
+        
+    def _get_chat_history(self) -> List[Dict[str, str]]:
+        """Get the current chat history."""
+        return self.chat_history.copy()
+    
     def _validate_content(self, content: str) -> str:
         """
         Validate and clean content to ensure it's relevant and properly formatted.
@@ -142,13 +151,14 @@ class ReportGenerator:
         
         return terms
     
-    def _generate_section_content(self, section: Dict[str, Any], query: str) -> Dict[str, Any]:
+    def _generate_section_content(self, section: Dict[str, Any], query: str, is_subsection: bool = False) -> Dict[str, Any]:
         """
         Generate content for a section using relevant documents from knowledge base.
         
         Args:
             section: Section dictionary containing title and content
             query: The original research query
+            is_subsection: Whether this is a subsection (to avoid repetitive structure)
             
         Returns:
             Dictionary containing generated content and citations
@@ -178,8 +188,15 @@ class ReportGenerator:
         # Prepare context from relevant documents
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
         
-        # Generate content using LLM
-        prompt = f"""Based on the following research documents and the section description, generate a focused section for a research report.
+        # Add section context to chat history
+        self._add_to_chat_history("system", f"Generating content for section: {section.get('section_title', '')}")
+        self._add_to_chat_history("system", f"Section description: {section.get('content', '')}")
+        
+        # Generate content using LLM with chat history
+        messages = [
+            {"role": "system", "content": "You are a research report writer. Write focused, well-cited sections based on provided research documents. Use collective citations, avoid repetition, and maintain proper formatting. Include quantitative data and stay on topic. Define technical terms and maintain consistent terminology."},
+            *self._get_chat_history(),
+            {"role": "user", "content": f"""Based on the following research documents and the section description, generate content for a research report.
         
 Section Title: {section.get('section_title', '')}
 Section Description: {section.get('content', '')}
@@ -187,7 +204,7 @@ Section Description: {section.get('content', '')}
 Research Documents:
 {context}
 
-Please write a concise section that:
+Please write content that:
 1. Focuses ONLY on the specific topic of this section
 2. Uses information from the provided documents
 3. Includes proper citations in the format [citation number]
@@ -209,20 +226,23 @@ Please write a concise section that:
 19. Follows IMRaD structure (Introduction, Methods, Results, and Discussion)
 20. Maintains clear section hierarchy
 
-Write the section content:"""
+{'IMPORTANT: This is a subsection. Write focused content without Introduction/Results/Discussion structure. Focus on the specific topic and integrate it with the main section.' if is_subsection else 'IMPORTANT: This is a main section. Write comprehensive content that flows with the overall report structure.'}
+
+Write the section content:"""}
+        ]
 
         try:
             response = self.client.chat.completions.create(
                 model=BASE_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a research report writer. Write focused, well-cited sections based on provided research documents. Use collective citations, avoid repetition, and maintain proper formatting. Include quantitative data and stay on topic. Define technical terms and maintain consistent terminology."},
-                    {"role": "user", "content": prompt}
-                ],
+                messages=messages,
                 temperature=0.7,
                 max_tokens=2000
             )
             
             content = response.choices[0].message.content
+            
+            # Add generated content to chat history
+            self._add_to_chat_history("assistant", content)
             
             # Extract technical terms
             self.technical_terms.update(self._extract_technical_terms(content))
@@ -253,31 +273,32 @@ Write the section content:"""
             }
             
         except Exception as e:
-            logger.error(f"Error generating content for section: {str(e)}")
+            logger.error(f"Error generating section content: {str(e)}")
             return {
                 'content': '',
                 'citations': []
             }
     
-    def _process_section(self, section: Dict[str, Any], query: str) -> Dict[str, Any]:
+    def _process_section(self, section: Dict[str, Any], query: str, is_subsection: bool = False) -> Dict[str, Any]:
         """
         Process a section and its subsections recursively.
         
         Args:
             section: Section dictionary
             query: Original research query
+            is_subsection: Whether this is a subsection
             
         Returns:
             Processed section with content and citations
         """
         # Generate content for main section
-        section_content = self._generate_section_content(section, query)
+        section_content = self._generate_section_content(section, query, is_subsection)
         
         # Process subsections if they exist
         subsections = []
         if 'subsections' in section:
             for subsection in section['subsections']:
-                subsection_content = self._generate_section_content(subsection, query)
+                subsection_content = self._generate_section_content(subsection, query, True)
                 subsections.append({
                     'title': subsection.get('subsection_title', ''),
                     'content': subsection_content['content'],
@@ -365,50 +386,78 @@ Write the section content:"""
     
     def generate_report(self, outline: Dict[str, Any], query: str) -> Dict[str, Any]:
         """
-        Generate a complete research report from an outline.
+        Generate a complete research report from the outline and query.
         
         Args:
-            outline: Report outline dictionary
-            query: Original research query
+            outline: The research outline containing sections and subsections
+            query: The original research query
             
         Returns:
-            Dictionary containing the generated report
+            Dictionary containing the complete report with all sections and citations
         """
-        # Clear processed sections tracking
-        self.processed_sections.clear()
-        self.used_citations.clear()
-        self.technical_terms.clear()
+        # Clear chat history at the start of a new report
+        self.chat_history = []
         
-        # Process each section
-        sections = []
-        for section in outline['sections']:
-            processed_section = self._process_section(section, query)
-            sections.append(processed_section)
+        # Add initial context to chat history
+        self._add_to_chat_history("system", f"Generating research report for query: {query}")
+        self._add_to_chat_history("system", f"Report title: {outline.get('title', 'Untitled Report')}")
         
-        # Collect all citations
-        all_citations = []
-        for section in sections:
-            all_citations.extend(section['citations'])
+        report = {
+            'title': outline.get('title', 'Untitled Report'),
+            'sections': [],
+            'citations': [],
+            'glossary': set(),
+            'generated_at': datetime.now().isoformat()
+        }
+        
+        # First, generate introduction
+        intro_section = {
+            'section_title': 'Introduction',
+            'content': f'Introduction to the research topic: {query}'
+        }
+        intro_content = self._generate_section_content(intro_section, query, False)
+        report['sections'].append({
+            'title': 'Introduction',
+            'content': intro_content['content'],
+            'citations': intro_content['citations'],
+            'subsections': []
+        })
+        
+        # Process each main section in the outline
+        for section in outline.get('sections', []):
+            # Skip if this is the introduction section
+            if section.get('section_title', '').lower() == 'introduction':
+                continue
+                
+            # Process main section
+            section_content = self._process_section(section, query, False)
+            report['sections'].append(section_content)
+            
+            # Process subsections if they exist
             if 'subsections' in section:
                 for subsection in section['subsections']:
-                    all_citations.extend(subsection['citations'])
+                    subsection_content = self._process_section(subsection, query, True)
+                    if 'subsections' not in section_content:
+                        section_content['subsections'] = []
+                    section_content['subsections'].append(subsection_content)
         
-        # Format references
-        references = self._format_references(all_citations)
+        # Finally, generate conclusion
+        conclusion_section = {
+            'section_title': 'Conclusion',
+            'content': f'Conclusion and future directions for: {query}'
+        }
+        conclusion_content = self._generate_section_content(conclusion_section, query, False)
+        report['sections'].append({
+            'title': 'Conclusion',
+            'content': conclusion_content['content'],
+            'citations': conclusion_content['citations'],
+            'subsections': []
+        })
         
-        # Format glossary
-        glossary = self._format_glossary()
+        # Add all citations to the report
+        report['citations'] = self.all_citations
         
-        # Format report content
-        report_content = f"# {outline['title']}\n\n"
-        for section in sections:
-            report_content += self._format_report_section(section)
+        # Add glossary
+        report['glossary'] = sorted(list(self.technical_terms))
         
-        report_content += f"\n{references}\n\n{glossary}"
-        
-        return {
-            'title': outline['title'],
-            'sections': sections,
-            'citations': all_citations,
-            'content': report_content
-        } 
+        return report 

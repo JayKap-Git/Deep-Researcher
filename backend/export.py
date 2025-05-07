@@ -170,37 +170,59 @@ class ReportExporter:
     
     def export_docx(self, report: Dict[str, Any], filename: str) -> str:
         """
-        Export the report as a DOCX file.
+        Export the report to DOCX format.
         
         Args:
-            report: Dictionary containing the report content
-            filename: Name of the output file
+            report: The report dictionary
+            filename: Base filename for the export
             
         Returns:
-            Path to the exported file
+            Path to the exported DOCX file
         """
         try:
             # Create a new document
             doc = DocxDocument()
             
             # Add title
-            doc.add_heading(report["title"], 0)
+            doc.add_heading(report['title'], 0)
             
-            # Add content
-            doc.add_paragraph(report["content"])
+            # Add sections
+            for section in report['sections']:
+                # Add section title
+                doc.add_heading(section['title'], 1)
+                
+                # Add section content
+                if 'content' in section and section['content']:
+                    doc.add_paragraph(section['content'])
+                
+                # Add subsections
+                if 'subsections' in section:
+                    for subsection in section['subsections']:
+                        # Add subsection title
+                        doc.add_heading(subsection['title'], 2)
+                        
+                        # Add subsection content
+                        if 'content' in subsection and subsection['content']:
+                            doc.add_paragraph(subsection['content'])
             
-            # Add citations
-            if report.get("citations"):
-                doc.add_heading("References", level=1)
-                for citation in report["citations"]:
-                    doc.add_paragraph(citation)
+            # Add references
+            if 'citations' in report and report['citations']:
+                doc.add_heading('References', 1)
+                for citation in report['citations']:
+                    doc.add_paragraph(citation['text'])
+            
+            # Add glossary if it exists
+            if 'glossary' in report and report['glossary']:
+                doc.add_heading('Glossary', 1)
+                for term in report['glossary']:
+                    doc.add_paragraph(f"**{term}**: [Definition to be added]")
             
             # Save the document
-            output_path = self.exports_dir / f"{filename}.docx"
-            doc.save(str(output_path))
+            output_path = os.path.join(EXPORTS_DIR, f"{filename}.docx")
+            doc.save(output_path)
             
             logger.info(f"Exported DOCX to {output_path}")
-            return str(output_path)
+            return output_path
             
         except Exception as e:
             logger.error(f"Error exporting DOCX: {str(e)}")

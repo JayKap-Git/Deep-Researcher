@@ -3,7 +3,7 @@ Document filtering module for removing irrelevant documents from the knowledge b
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 from backend.config import OPENAI_API_KEY, BASE_MODEL
@@ -102,15 +102,35 @@ Respond with a JSON object containing:
             
             # Remove irrelevant documents from knowledge base
             if documents_to_remove:
-                # Get document IDs to remove
-                ids_to_remove = [
-                    doc.metadata.get('id') for doc in documents_to_remove 
-                    if doc.metadata.get('id')
-                ]
+                # Get unique document IDs to remove
+                seen_ids = set()
+                unique_ids_to_remove = []
+                
+                for doc in documents_to_remove:
+                    doc_id = doc.metadata.get('id')
+                    if doc_id and doc_id not in seen_ids:
+                        seen_ids.add(doc_id)
+                        unique_ids_to_remove.append(doc_id)
                 
                 # Remove documents from vector store
-                if ids_to_remove:
-                    knowledge_base.vectorstore._collection.delete(ids=ids_to_remove)
+                if unique_ids_to_remove:
+                    try:
+                        # Check if documents exist in collection before deleting
+                        existing_ids = set()
+                        for doc_id in unique_ids_to_remove:
+                            try:
+                                # Try to get the document to verify it exists
+                                knowledge_base.vectorstore._collection.get(ids=[doc_id])
+                                existing_ids.add(doc_id)
+                            except Exception:
+                                continue
+                        
+                        # Only delete documents that exist
+                        if existing_ids:
+                            knowledge_base.vectorstore._collection.delete(ids=list(existing_ids))
+                            
+                    except Exception as e:
+                        logger.error(f"Error removing documents from vector store: {str(e)}")
                     
                 logger.info(f"Removed {len(documents_to_remove)} irrelevant documents from knowledge base")
             else:
