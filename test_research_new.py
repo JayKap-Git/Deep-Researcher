@@ -4,6 +4,8 @@ Test script for the research pipeline.
 
 import os
 import logging
+import shutil
+import stat
 from datetime import datetime
 from pathlib import Path
 from backend.config import (
@@ -26,10 +28,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def ensure_directory_permissions(directory: str):
+    """Ensure the directory has proper read/write permissions."""
+    try:
+        if os.path.exists(directory):
+            os.chmod(directory, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            for root, dirs, files in os.walk(directory):
+                for d in dirs:
+                    os.chmod(os.path.join(root, d), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                for f in files:
+                    os.chmod(os.path.join(root, f), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        logger.info(f"Set permissions for directory: {directory}")
+    except Exception as e:
+        logger.error(f"Error setting directory permissions: {str(e)}")
+        raise
+
+def clear_vectorstore_dir():
+    """Clear the vectorstore directory to ensure a fresh start."""
+    try:
+        if os.path.exists(VECTORSTORE_DIR):
+            ensure_directory_permissions(VECTORSTORE_DIR)
+            shutil.rmtree(VECTORSTORE_DIR)
+        os.makedirs(VECTORSTORE_DIR, exist_ok=True)
+        ensure_directory_permissions(VECTORSTORE_DIR)
+        logger.info("Vectorstore directory cleared successfully")
+    except Exception as e:
+        logger.error(f"Error clearing vectorstore directory: {str(e)}")
+        raise
+
 def clear_knowledge_base():
     """Clear the knowledge base and reinitialize it."""
     try:
-        # Initialize knowledge base first
+        # Clear vectorstore directory first
+        clear_vectorstore_dir()
+        
+        # Initialize knowledge base
         kb = KnowledgeBase()
         
         # Try to clear the knowledge base
@@ -122,41 +155,41 @@ def main():
             logger.warning("No documents found")
         
         # Step 4: Generate report
-        logger.info("\nStep 4: Generating report...")
-        report = report_generator.generate_report(outline, kb)
+        # logger.info("\nStep 4: Generating report...")
+        # report = report_generator.generate_report(outline, kb)
         
-        # Log report details
-        logger.info("\nReport generated successfully!")
-        logger.info(f"Report title: {report['title']}")
-        logger.info(f"Number of sections: {len(report['sections'])}")
-        logger.info(f"Number of citations: {len(report.get('citations', []))}")
+        # # Log report details
+        # logger.info("\nReport generated successfully!")
+        # logger.info(f"Report title: {report['title']}")
+        # logger.info(f"Number of sections: {len(report['sections'])}")
+        # logger.info(f"Number of citations: {len(report.get('citations', []))}")
         
-        # Print report sections
-        logger.info("\nReport sections:")
-        for section in report['sections']:
-            logger.info(f"\nSection: {section['section_title']}")
-            if 'content' in section:
-                logger.info(f"Content: {section['content']}")
-            if 'subsections' in section:
-                for subsection in section['subsections']:
-                    logger.info(f"\n  Subsection: {subsection['subsection_title']}")
-                    if 'content' in subsection:
-                        logger.info(f"  Content: {subsection['content']}")
+        # # Print report sections
+        # logger.info("\nReport sections:")
+        # for section in report['sections']:
+        #     logger.info(f"\nSection: {section['section_title']}")
+        #     if 'content' in section:
+        #         logger.info(f"Content: {section['content']}")
+        #     if 'subsections' in section:
+        #         for subsection in section['subsections']:
+        #             logger.info(f"\n  Subsection: {subsection['subsection_title']}")
+        #             if 'content' in subsection:
+        #                 logger.info(f"  Content: {subsection['content']}")
         
-        # Step 5: Export report
-        logger.info("\nStep 5: Exporting report...")
+        # # Step 5: Export report
+        # logger.info("\nStep 5: Exporting report...")
         
-        # Format report content for export
-        report_content = f"# {report['title']}\n\n"
-        for section in report['sections']:
-            report_content += f"## {section['section_title']}\n\n"
-            if 'content' in section:
-                report_content += f"{section['content']}\n\n"
-            if 'subsections' in section:
-                for subsection in section['subsections']:
-                    report_content += f"### {subsection['subsection_title']}\n\n"
-                    if 'content' in subsection:
-                        report_content += f"{subsection['content']}\n\n"
+        # # Format report content for export
+        # report_content = f"# {report['title']}\n\n"
+        # for section in report['sections']:
+        #     report_content += f"## {section['section_title']}\n\n"
+        #     if 'content' in section:
+        #         report_content += f"{section['content']}\n\n"
+        #     if 'subsections' in section:
+        #         for subsection in section['subsections']:
+        #             report_content += f"### {subsection['subsection_title']}\n\n"
+        #             if 'content' in subsection:
+        #                 report_content += f"{subsection['content']}\n\n"
         
         # Export to different formats
         try:

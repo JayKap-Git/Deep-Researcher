@@ -37,9 +37,10 @@ class ArxivResult:
         self.arxiv_id = arxiv_id
 
 class RateLimiter:
-    """Handles rate limiting for arXiv API calls."""
+    """Rate limiter for API requests."""
     
     def __init__(self, requests_per_minute: int, retry_after: int):
+        """Initialize rate limiter."""
         self.requests_per_minute = requests_per_minute
         self.retry_after = retry_after
         self.requests = []
@@ -175,11 +176,14 @@ class DataGatherer:
                 # Get initial document count
                 initial_count = len(processed_docs)
                 
-                # Filter documents
-                self.document_filter.filter_documents(processed_docs, expanded_query, knowledge_base)
+                # Filter documents and get filtered list
+                filtered_docs = self.document_filter.filter_documents(processed_docs, expanded_query, knowledge_base)
+                
+                # Update processed_docs with filtered results
+                processed_docs = filtered_docs
                 
                 # Get filtering stats
-                final_count = len([doc for doc in processed_docs if not doc.metadata.get("removed")])
+                final_count = len(filtered_docs)
                 stats = self.document_filter.get_filtering_stats(initial_count, final_count)
                 
                 logger.info("Document filtering stats:")

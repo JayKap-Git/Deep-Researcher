@@ -7,11 +7,10 @@ import os
 from typing import List, Dict, Any, Optional
 import logging
 from pathlib import Path
-import chromadb
+from chromadb import PersistentClient
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
-from langchain_community.vectorstores.utils import filter_complex_metadata
 
 from backend.config import (
     VECTORSTORE_DIR,
@@ -42,16 +41,17 @@ class VectorStore:
             os.makedirs(VECTORSTORE_CONFIGS["persist_directory"], exist_ok=True)
             
             # Initialize ChromaDB client with persistence
-            self.client = chromadb.PersistentClient(path=VECTORSTORE_CONFIGS["persist_directory"])
+            self.client = PersistentClient(path=VECTORSTORE_CONFIGS["persist_directory"])
             
-            # Initialize vector store with basic configuration
+            # Initialize vector store with persistence configuration
             self.vectorstore = Chroma(
                 client=self.client,
                 collection_name=VECTORSTORE_CONFIGS["collection_name"],
-                embedding_function=self.embeddings
+                embedding_function=self.embeddings,
+                persist_directory=VECTORSTORE_CONFIGS["persist_directory"]
             )
             
-            logger.info(f"Initialized vector store with collection: {VECTORSTORE_CONFIGS['collection_name']}")
+            logger.info(f"Initialized persistent vector store at: {VECTORSTORE_CONFIGS['persist_directory']}")
             
         except Exception as e:
             logger.error(f"Error initializing vector store: {str(e)}")

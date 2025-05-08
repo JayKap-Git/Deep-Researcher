@@ -9,7 +9,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any
 import chromadb
-import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -37,11 +36,7 @@ VECTORSTORE_DIR = BASE_DIR / "vectorstore"
 LOGS_DIR = BASE_DIR / "logs"
 
 # Create directories if they don't exist
-UPLOADS_DIR.mkdir(exist_ok=True)
-EXPORTS_DIR.mkdir(exist_ok=True)
-
-# Create necessary directories with proper permissions
-for directory in [VECTORSTORE_DIR, LOGS_DIR]:
+for directory in [UPLOADS_DIR, EXPORTS_DIR, VECTORSTORE_DIR, LOGS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o777)  # Set full permissions
 
@@ -63,27 +58,11 @@ SEARCH_CONFIGS = {
     "max_arxiv_results": 5
 }
 
-# Create temporary directory for ChromaDB
-TEMP_DIR = tempfile.mkdtemp()
-
-# ChromaDB client settings
-CHROMA_SETTINGS = {
-    "anonymized_telemetry": False,
-    "is_persistent": False,
-    "persist_directory": TEMP_DIR
-}
-
-# Create local vectorstore directory with proper permissions
-local_vectorstore_dir = BASE_DIR / "local_vectorstore"
-local_vectorstore_dir.mkdir(parents=True, exist_ok=True)
-os.chmod(local_vectorstore_dir, 0o777)  # Set full permissions
-
 # Vector store configurations
 VECTORSTORE_CONFIGS = {
     "collection_name": "research_documents",
     "embedding_dimensions": 1536,
-    "auto_persist": False,
-    "client_settings": CHROMA_SETTINGS
+    "persist_directory": str(VECTORSTORE_DIR)
 }
 
 # PDF Export configurations

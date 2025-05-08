@@ -1,72 +1,81 @@
 """
-Knowledge base module for storing and retrieving research documents.
+Knowledge base module for managing document storage and retrieval.
 """
 
-import os
 import logging
+import os
 import shutil
-from typing import List, Dict, Any, Optional
+import tempfile
+from typing import List, Dict, Any
 from pathlib import Path
+from chromadb import PersistentClient
+from chromadb.config import Settings
 from langchain_core.documents import Document
+from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
-import chromadb
+
 from backend.config import (
     OPENAI_API_KEY,
-    VECTORSTORE_DIR,
-    VECTORSTORE_CONFIGS,
-    CHROMA_SETTINGS
+    VECTORSTORE_CONFIGS
 )
-from backend.gather import DataGatherer, ArxivResult
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class KnowledgeBase:
-    """Handles storage and retrieval of research documents."""
+    """Manages document storage and retrieval using ChromaDB."""
     
     def __init__(self):
-        """Initialize the knowledge base with vector store."""
+        """Initialize the knowledge base with ChromaDB."""
         try:
+            if not OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY is not set")
+                
             # Initialize embeddings
             self.embeddings = OpenAIEmbeddings(
-                openai_api_key=OPENAI_API_KEY
+                openai_api_key=OPENAI_API_KEY,
+                model="text-embedding-3-small"
             )
             
-            # Initialize vector store
-            self._initialize_vectorstore()
+            # Initialize ChromaDB client with settings
+            self.settings = Settings(
+                anonymized_telemetry=False,
+                allow_reset=True,
+                is_persistent=True
+            )
             
-            logger.info(f"Initialized vector store with collection: {VECTORSTORE_CONFIGS['collection_name']}")
+            # Create a temporary directory for ChromaDB
+            self.temp_dir = tempfile.mkdtemp()
+            logger.info(f"Created temporary directory for ChromaDB: {self.temp_dir}")
+            
+            # Initialize vector store directly
+            self.collection_name = VECTORSTORE_CONFIGS["collection_name"]
+            self.vectorstore = Chroma(
+                collection_name=self.collection_name,
+                embedding_function=self.embeddings,
+                persist_directory=self.temp_dir
+            )
+            
+            logger.info(f"Initialized vector store with collection: {self.collection_name}")
             
         except Exception as e:
             logger.error(f"Error initializing knowledge base: {str(e)}")
             raise
-            
-    def _initialize_vectorstore(self):
-        """Initialize the vector store with proper settings."""
-        try:
-            self.vectorstore = Chroma(
-                collection_name=VECTORSTORE_CONFIGS["collection_name"],
-                embedding_function=self.embeddings,
-                client_settings=chromadb.config.Settings(**VECTORSTORE_CONFIGS["client_settings"])
-            )
-            logger.info(f"Initialized vector store with collection: {VECTORSTORE_CONFIGS['collection_name']}")
-        except ValueError as e:
-            # If there's an existing instance with different settings, delete and recreate
-            if "already exists" in str(e):
-                self._delete_vectorstore()
-                self._initialize_vectorstore()
-            else:
-                raise
     
-    def _delete_vectorstore(self):
-        """Delete the vector store."""
+    def _delete_vectorstore(self) -> None:
+        """Delete the vector store collection."""
         try:
-            if self.vectorstore:
-                self.vectorstore._client.delete_collection()
-                self.vectorstore = None
-                logger.info("Vector store deleted successfully")
+            # Delete the collection by recreating the vector store
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+            os.makedirs(self.temp_dir, exist_ok=True)
+            
+            # Reinitialize vector store with empty collection
+            self.vectorstore = Chroma(
+                collection_name=self.collection_name,
+                embedding_function=self.embeddings,
+                persist_directory=self.temp_dir
+            )
+            
         except Exception as e:
             logger.error(f"Error deleting vector store: {str(e)}")
             raise
@@ -85,10 +94,6 @@ class KnowledgeBase:
                 
             # Add documents to vector store
             self.vectorstore.add_documents(documents)
-            
-            # Persist changes if auto_persist is enabled
-            if VECTORSTORE_CONFIGS["auto_persist"]:
-                self.vectorstore.persist()
             
             logger.info(f"Added {len(documents)} documents to knowledge base")
             
@@ -116,43 +121,52 @@ class KnowledgeBase:
             logger.error(f"Error searching knowledge base: {str(e)}")
             raise
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_collection_stats(self) -> Dict[str, Any]:
         """
-        Get statistics about the knowledge base.
+        Get statistics about the knowledge base collection.
         
         Returns:
-            Dictionary containing knowledge base statistics
+            Dictionary containing collection statistics
         """
         try:
-            collection = self.vectorstore._collection
             stats = {
-                "total_documents": collection.count(),
-                "collection_name": VECTORSTORE_CONFIGS["collection_name"],
-                "embedding_dimensions": VECTORSTORE_CONFIGS["embedding_dimensions"]
+                "total_documents": len(self.vectorstore._collection.get()["ids"]),
+                "dimensions": VECTORSTORE_CONFIGS["embedding_dimensions"],
+                "status": "active"
             }
+            
             return stats
             
         except Exception as e:
-            logger.error(f"Error getting knowledge base stats: {str(e)}")
-            raise
+            logger.error(f"Error getting collection stats: {str(e)}")
+            return {
+                "total_documents": 0,
+                "dimensions": 0,
+                "status": "error",
+                "error": str(e)
+            }
     
     def clear(self) -> None:
         """Clear all documents from the knowledge base."""
         try:
-            # Delete the entire vector store
             self._delete_vectorstore()
-            
-            # Reinitialize with fresh settings
-            self._initialize_vectorstore()
-            
             logger.info("Knowledge base cleared successfully")
             
         except Exception as e:
             logger.error(f"Error clearing knowledge base: {str(e)}")
             raise
+    
+    def __del__(self):
+        """Clean up temporary directory when the object is destroyed."""
+        try:
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+                logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
+        except Exception as e:
+            logger.error(f"Error cleaning up temporary directory: {str(e)}")
 
 # Example usage
 if __name__ == "__main__":
     kb = KnowledgeBase()
-    stats = kb.get_stats()
+    stats = kb.get_collection_stats()
     print("Knowledge base stats:", stats) 
